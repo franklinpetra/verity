@@ -1,7 +1,8 @@
+<<<<<<< HEAD
 # Create Verity
 Thank you for using this template. It's a configuration to allow a fast startup no matter if its for a prototype
 or a production application.
-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
+
 This template should get you started in minutes verses configuring each piece individually.
 
 The technologies this template comes with are: 
@@ -17,3 +18,7 @@ Currently, two official plugins are available for use with Vite:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
 - [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+=======
+# verity
+App that verifies AI by letting them work together.
+>>>>>>> 0d17e1a1a0e042e9d1a4a0609cabb205457628a1
