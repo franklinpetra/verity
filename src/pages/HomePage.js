@@ -6,7 +6,7 @@ import ClockFace from '../components/ClockFace';
 const HomePage = () => {
   return (
     <div className="home-page">
-      <h1>Verity</h1>
+      <h1>Welcome to Verity</h1>
       <ClockFace />
     </div>
   );
