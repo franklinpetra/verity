@@ -54,7 +54,7 @@
 
         <label class="toggle">
           <input type="checkbox" id="web" />
-          <span><strong>Let advisors search the web</strong> for outside facts, such as market data and comparable deals. <span class="muted">Adds a few cents, and sends search queries to OpenRouter's search provider. Leave off for confidential matters.</span></span>
+          <span><strong>Let advisors search the web for sources</strong>, such as market data, comparable deals and research. <span class="muted">Adds a few cents, and sends search queries to OpenRouter's search provider. Turn off for confidential matters; advisors will then cite only your documents.</span></span>
         </label>
 
         <div class="go">
@@ -68,7 +68,7 @@
         <div class="run-head">
           <ol class="steps" id="steps">
             <li data-step="blind">Independent answers</li>
-            <li data-step="debate">Debate</li>
+            <li data-step="debate">Conversation</li>
             <li data-step="brief">Decision brief</li>
           </ol>
           <p class="run-note" id="run-note" role="status"></p>
@@ -82,9 +82,8 @@
           <div class="brief-tools">
             <p class="checks" id="checks"></p>
             <div class="exports">
-              <button type="button" class="secondary small" id="dl-brief">Download brief</button>
-              <button type="button" class="secondary small" id="dl-record">Download full record</button>
-              <button type="button" class="secondary small" id="print">Print or save as PDF</button>
+              <button type="button" class="primary small" id="print">Save as PDF</button>
+              <button type="button" class="secondary small" id="dl-md">Markdown</button>
             </div>
           </div>
           <div class="brief-body md" id="brief-body"></div>
@@ -95,13 +94,21 @@
           <div class="cards" id="cards-blind"></div>
         </section>
         <section class="round" id="round-debate" hidden>
-          <h2>Debate <span class="muted">· each advisor reads the others and responds</span></h2>
+          <h2>Conversation <span class="muted">· each advisor reads the others, challenges and builds</span></h2>
           <div class="cards" id="cards-debate"></div>
+        </section>
+        <section class="round" id="round-more" hidden>
+          <h2>Conversation, continued <span class="muted">· the brief's writer asked for one more exchange</span></h2>
+          <p class="more-why" id="more-why"></p>
+          <div class="cards" id="cards-more"></div>
         </section>
 
         <p class="again"><button type="button" class="secondary" id="again">Ask about another decision</button></p>
       </section>
     </main>
+
+    <!-- The printable report, built when someone saves the PDF. Hidden on screen. -->
+    <div class="report" id="report" aria-hidden="true"></div>
 
     <footer class="foot">
       <span class="maker" id="maker"></span>
@@ -128,10 +135,10 @@
       <button type="button" class="close" data-close aria-label="Close">×</button>
       <h2 id="how-title">How it works</h2>
       <ol class="panel-list">
-        <li><b>Independent answers.</b> Each advisor reads your documents and answers alone. None is told the others exist, because knowing there's a room makes models posture, defer, or leave gaps for someone else.</li>
-        <li><b>Quote check.</b> Every quote an advisor attributes to your documents is looked up in the text itself. Quotes that aren't there are flagged and shown to the whole board.</li>
-        <li><b>Debate.</b> Each advisor reads all the answers and must say where the others are wrong, with evidence. Changing position without a reason gets called out.</li>
-        <li><b>Decision brief.</b> One advisor writes the brief: the recommendation and how many back it, where the board agrees, where it splits and why, the risks, and what to find out before deciding. Disagreement is shown, not averaged away.</li>
+        <li><b>Independent.</b> Each advisor investigates alone, unaware the others exist, because knowing there's a room makes models posture or defer. Each reports its most consequential insight in about three sentences, with sources.</li>
+        <li><b>Quote check.</b> Every quote attributed to your documents is looked up in the text itself. Quotes that aren't there are flagged to the whole board.</li>
+        <li><b>Conversation.</b> Each advisor reads the others and advances the discussion: challenging assumptions, adding evidence, revising when persuaded. Agreement alone isn't progress.</li>
+        <li><b>Decision brief.</b> The advisors take turns writing it. It leads with the most consequential discovery, even if only one advisor found it, and keeps real disagreement visible. If the board isn't ready, the writer can ask for one more exchange. Underneath, each advisor leaves a one-line parting thought.</li>
       </ol>
       <p class="panel-note">A failure never reads as a success: if an advisor times out or its answer is cut off, the run says so and carries on with the rest. Long documents are read whole when they fit; when they don't, an advisor gets the sections most relevant to the decision, and the brief says so.</p>
     </dialog>

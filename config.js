@@ -18,8 +18,12 @@ export const SEATS = [
   { id: "muse", name: "Muse", maker: "Meta", model: "meta/muse-spark-1.3", color: "#6b4aa8" },
 ];
 
-// Who writes the final decision brief. Any seat id.
-export const SYNTHESIZER = "claude";
+// Who writes the decision brief: "rotate" takes turns, so each advisor writes about every fifth brief.
+// Or a seat id, such as "claude", to always use one.
+export const SYNTHESIZER = "rotate";
+
+// Sources are expected in this room, so advisors may search the web unless the person turns it off.
+export const WEB_SEARCH_DEFAULT = true;
 
 export const LIMITS = {
   // Room left in each model's memory for its own thinking and answer.

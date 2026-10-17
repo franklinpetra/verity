@@ -2,16 +2,17 @@
 // debates once, and writes a decision brief with every document quote checked against the source.
 // Everything runs in this tab; the only network calls go to OpenRouter with the person's own key.
 
-import { BRAND, LIMITS, SEATS, SYNTHESIZER } from "./config.js";
+import { BRAND, LIMITS, SEATS, SYNTHESIZER, WEB_SEARCH_DEFAULT } from "./config.js";
 import { ACCEPT, documentsText, pickRelevant, readDocument, tokensOf } from "./docs.js";
 import { SeatError, ask, checkKey, modelCatalog } from "./llm.js";
 import { render } from "./markdown.js";
-import { blindMessages, decisionText, discussionMessages, synthesisMessages } from "./prompts.js";
+import { ANOTHER_ROUND, blindMessages, decisionText, discussionMessages, partingThought, synthesisMessages } from "./prompts.js";
 import { checkCitations, flagList } from "./verify.js";
 
 const $ = (id) => document.getElementById(id);
 const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const KEY_STORE = "verity-openrouter-key";
+const TURN_STORE = "verity-writer-turn"; // whose turn it is to write the brief
 const OVERHEAD_TOKENS = 3_000; // instructions and the decision itself
 const ANSWER_TOKENS = 2_500; // a typical written answer, for estimates
 const THINKING_TOKENS = 4_000; // a typical amount of reasoning, for estimates
@@ -239,18 +240,15 @@ $("web").addEventListener("change", estimate);
 
 const seatById = (id) => SEATS.find((s) => s.id === id);
 
-function card(round, seat) {
-  return $(`card-${round}-${seat.id}`);
-}
-
-function showCard(round, seat, state, html = "", failed = false) {
-  let el = card(round, seat);
+function showCard(round, container, seat, state, html = "", failed = false) {
+  const id = `card-${container}-${seat.id}`;
+  let el = $(id);
   if (!el) {
     el = document.createElement("details");
-    el.id = `card-${round}-${seat.id}`;
+    el.id = id;
     el.className = "card";
     el.style.setProperty("--seat", seat.color);
-    $(`cards-${round}`).append(el);
+    $(container).append(el);
   }
   el.classList.toggle("working", !html && !failed);
   el.classList.toggle("failed", failed);
@@ -289,31 +287,51 @@ const addCost = (c) => {
   $("spent").textContent = spent ? `Spent so far: $${spent.toFixed(2)}` : "";
 };
 
+const seconds = (ms) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
+
 /** Runs one step for several seats at once; a seat that fails is shown as failed and the rest carry on. */
-async function step(round, seats, build) {
-  for (const s of seats) showCard(round, s, "thinking…");
+async function step(round, container, seats, build) {
+  for (const s of seats) showCard(round, container, s, "thinking…");
+  const started = performance.now();
   const results = await Promise.all(
     seats.map(async (s) => {
       const { messages, excerpt } = build(s);
+      const t0 = performance.now();
       try {
         const r = await ask({ key: currentKey(), model: s.model, messages, web: $("web").checked, signal: controller.signal });
         addCost(r.cost);
+        r.ms = performance.now() - t0;
         r.checks = checkCitations(r.text, docs);
         r.excerpt = excerpt;
-        showCard(round, s, stateLine(r) + (excerpt ? " · read excerpts" : ""), answerHtml(r));
+        showCard(round, container, s, stateLine(r) + (excerpt ? " · read excerpts" : ""), answerHtml(r));
         return [s.id, r];
       } catch (err) {
         const why = err instanceof SeatError ? err.message : "Something went wrong.";
         if (!(err instanceof SeatError)) console.error(err);
-        showCard(round, s, `failed: ${why}`, "", true);
+        showCard(round, container, s, `failed: ${why}`, "", true);
         return [s.id, { failed: why }];
       }
     }),
   );
-  return new Map(results);
+  const map = new Map(results);
+  record.steps.push({ round, ms: performance.now() - started, cost: [...map.values()].reduce((n, r) => n + (r.cost || 0), 0), results: map });
+  return map;
 }
 
 const answered = (map) => [...map].filter(([, r]) => !r.failed);
+const named = (list) => list.map(([id, r]) => ({ name: seatById(id).name, text: r.text }));
+
+/** Who writes the brief: a fixed seat, or everyone in turn, about every fifth decision each. */
+function chooseWriter(availableIds) {
+  const order = SEATS.filter((s) => availableIds.includes(s.id));
+  if (SYNTHESIZER !== "rotate" && availableIds.includes(SYNTHESIZER)) return seatById(SYNTHESIZER);
+  let turn = 0;
+  try {
+    turn = Number(localStorage.getItem(TURN_STORE)) || 0;
+    localStorage.setItem(TURN_STORE, String(turn + 1));
+  } catch {}
+  return order[turn % order.length];
+}
 
 async function convene() {
   const fields = {
@@ -324,99 +342,139 @@ async function convene() {
   };
   const decision = decisionText(fields);
   const seats = SEATS.filter((s) => seated.has(s.id));
-  record = { at: new Date(), fields, docs: docs.map((d) => ({ name: d.name, kind: d.kind, size: sizeOf(d) })), seats, blind: null, debate: null, brief: null, web: $("web").checked };
+  record = { at: new Date(), fields, docs: docs.map((d) => ({ name: d.name, kind: d.kind, size: sizeOf(d) })), seats, steps: [], brief: null, web: $("web").checked };
   controller = new AbortController();
   spent = 0;
   addCost(0);
+  const t0 = performance.now();
 
   $("run").hidden = false;
   $("brief").hidden = true;
   $("round-debate").hidden = true;
-  $("cards-blind").innerHTML = "";
-  $("cards-debate").innerHTML = "";
+  $("round-more").hidden = true;
+  for (const id of ["cards-blind", "cards-debate", "cards-more"]) $(id).innerHTML = "";
   $("stop").hidden = false;
   $("again").hidden = true;
   $("run-note").textContent = "";
   for (const s of ["blind", "debate", "brief"]) setStep(s, "");
   $("go").disabled = true;
-  $("run").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  $("run").scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth" });
 
   try {
-    // 1. Independent answers, each advisor alone.
+    // 1. Independent: each advisor alone, unaware of the others.
     setStep("blind", "active");
-    const blind = await step("blind", seats, (s) => {
+    const blind = await step("Independent", "cards-blind", seats, (s) => {
       const d = docsFor(s.model, decision, 0);
       return { messages: blindMessages({ model: s.model, documents: d.text, decision }), excerpt: d.excerpt };
     });
-    record.blind = blind;
     setStep("blind", "done");
     if (controller.signal.aborted) return finish("Stopped.");
     const blindDone = answered(blind);
-    if (blindDone.length < 2) return finish("Fewer than two advisors answered, so there's no board to debate. Check your key and credits, then try again.");
+    if (blindDone.length < 2) return finish("Fewer than two advisors answered, so there's no board to talk it through. Check your key and credits, then try again.");
 
-    // 2. Debate: everyone reads everyone, with the quote check's flags.
-    const blindAnswers = blindDone.map(([id, r]) => ({ name: seatById(id).name, text: r.text }));
+    // 2. The conversation: everyone reads everyone, with the quote check's flags.
+    const blindAnswers = named(blindDone);
     const blindFlags = flagList(blindDone.map(([id, r]) => [seatById(id).name, r.checks]));
-    const debaters = blindDone.map(([id]) => seatById(id));
-    const answersTokens = tokensOf(blindAnswers.reduce((n, a) => n + a.text.length, 0));
+    let answersTokens = tokensOf(blindAnswers.reduce((n, a) => n + a.text.length, 0));
     $("round-debate").hidden = false;
     setStep("debate", "active");
-    const debate = await step("debate", debaters, (s) => {
+    let debate = await step("Conversation", "cards-debate", blindDone.map(([id]) => seatById(id)), (s) => {
       const d = docsFor(s.model, decision, answersTokens);
       return { messages: discussionMessages({ model: s.model, documents: d.text, decision, self: s.name, answers: blindAnswers, quoteFlags: blindFlags }), excerpt: d.excerpt };
     });
-    record.debate = debate;
     setStep("debate", "done");
     if (controller.signal.aborted) return finish("Stopped.");
 
-    // 3. The brief, written by the synthesizer (or the first advisor who answered, if it couldn't).
-    const debateDone = answered(debate);
-    const writer = seatById(debateDone.some(([id]) => id === SYNTHESIZER) ? SYNTHESIZER : (debateDone[0] || blindDone[0])[0]);
-    const debateAnswers = debateDone.map(([id, r]) => ({ name: seatById(id).name, text: r.text }));
-    const allFlags = [blindFlags, flagList(debateDone.map(([id, r]) => [seatById(id).name, r.checks]))].filter(Boolean).join("\n");
-    const allTokens = answersTokens + tokensOf(debateAnswers.reduce((n, a) => n + a.text.length, 0));
+    // 3. The brief, by this decision's writer. It may ask once for another exchange.
+    let latest = answered(debate).length ? answered(debate) : blindDone;
+    const writer = chooseWriter(latest.map(([id]) => id));
+    const allFlags = () => record.steps.flatMap((st) => answered(st.results).map(([id, r]) => [seatById(id).name, r.checks]));
+    const conversation = () => record.steps.slice(1).flatMap((st) => named(answered(st.results)));
     setStep("brief", "active");
-    const d = docsFor(writer.model, decision, allTokens);
-    try {
+    let brief = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      answersTokens = tokensOf([...blindAnswers, ...conversation()].reduce((n, a) => n + a.text.length, 0));
+      const d = docsFor(writer.model, decision, answersTokens);
+      const b0 = performance.now();
       const r = await ask({
         key: currentKey(),
         model: writer.model,
-        messages: synthesisMessages({ model: writer.model, documents: d.text, decision, blind: blindAnswers, discussion: debateAnswers, quoteFlags: allFlags }),
+        messages: synthesisMessages({ model: writer.model, documents: d.text, decision, blind: blindAnswers, discussion: conversation(), quoteFlags: flagList(allFlags()), mayAskForMore: attempt === 0 }),
         web: false,
         signal: controller.signal,
       });
       addCost(r.cost);
+      r.ms = performance.now() - b0;
+      record.steps.push({ round: attempt === 0 ? "Brief" : "Brief, after another round", ms: r.ms, cost: r.cost, results: new Map() });
+      if (attempt === 0 && r.text.startsWith(ANOTHER_ROUND)) {
+        // The writer isn't ready: one more exchange, then the brief.
+        const why = r.text.slice(ANOTHER_ROUND.length).trim();
+        $("more-why").textContent = why;
+        $("round-more").hidden = false;
+        const latestAnswers = named(latest);
+        debate = await step("Conversation, continued", "cards-more", latest.map(([id]) => seatById(id)), (s) => {
+          const dd = docsFor(s.model, decision, answersTokens);
+          return {
+            messages: discussionMessages({ model: s.model, documents: dd.text, decision: `${decision}\n\nWhat the board must resolve: ${why}`, self: s.name, answers: latestAnswers, quoteFlags: "", round: 2 }),
+            excerpt: dd.excerpt,
+          };
+        });
+        if (controller.signal.aborted) return finish("Stopped.");
+        if (answered(debate).length) latest = answered(debate);
+        continue;
+      }
       r.checks = checkCitations(r.text, docs);
       r.writer = writer;
       r.excerpt = d.excerpt;
-      record.brief = r;
-      showBrief(r, blind, debate);
-      setStep("brief", "done");
-      finish();
-    } catch (err) {
-      finish(`The brief couldn't be written: ${err instanceof SeatError ? err.message : "something went wrong"}. The answers and debate are below.`);
+      brief = r;
+      break;
     }
+    if (!brief) return finish("The brief couldn't be written. The independent answers and conversation are below.");
+    record.brief = brief;
+    record.totalMs = performance.now() - t0;
+    // Parting thoughts: each advisor's last word, except the writer's.
+    record.parting = latest
+      .filter(([id]) => id !== writer.id)
+      .map(([id, r]) => ({ seat: seatById(id), text: partingThought(r.text) }))
+      .filter((p) => p.text);
+    showBrief();
+    setStep("brief", "done");
+    finish();
   } catch (err) {
+    if (err instanceof SeatError) return finish(`The brief couldn't be written: ${err.message} The answers so far are below.`);
     console.error(err);
     finish("Something went wrong. The answers so far are below.");
   }
 }
 
-function showBrief(r, blind, debate) {
-  const all = [...answered(blind), ...answered(debate)].flatMap(([, x]) => x.checks).concat(r.checks);
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function partingHtml() {
+  if (!record.parting.length) return "";
+  return `<aside class="parting"><p class="parting-head">Parting thoughts from inside the room</p><ol>${record.parting
+    .map((p) => `<li data-seat-color="${p.seat.id}"><span class="parting-who">${escape(p.seat.name)}</span> ${render(p.text, checkCitations(p.text, docs)).replace(/^<p>|<\/p>$/g, "")}</li>`)
+    .join("")}</ol></aside>`;
+}
+
+function showBrief() {
+  const r = record.brief;
+  const all = record.steps.flatMap((st) => answered(st.results).flatMap(([, x]) => x.checks)).concat(r.checks);
   const s = checkSummary(all);
-  const missing = [...blind].filter(([, x]) => x.failed).map(([id]) => seatById(id).name);
+  const first = record.steps[0].results;
+  const missing = [...first].filter(([, x]) => x.failed).map(([id]) => seatById(id).name);
   $("checks").innerHTML = [
-    `Written by ${escape(r.writer.name)} from ${answered(blind).length} independent answers and ${answered(debate).length} debate responses.`,
+    `Written by ${escape(r.writer.name)}.`,
     s.total ? `<strong>${s.total} document quotes checked:</strong> ${s.ok} found${s.moved ? `, ${s.moved} on a different page` : ""}${s.bad ? `, <strong>${s.bad} not found</strong>` : ""}.` : docs.length ? "No document quotes were cited." : "",
     missing.length ? `Missing: ${escape(missing.join(", "))}.` : "",
-    r.excerpt || [...blind.values()].some((x) => x.excerpt) ? "Some advisors read excerpts of the documents." : "",
+    r.excerpt || [...first.values()].some((x) => x.excerpt) ? "Some advisors read excerpts of the documents." : "",
+    `Took ${seconds(record.totalMs)} and cost $${spent.toFixed(2)}.`,
   ]
     .filter(Boolean)
     .join(" ");
-  $("brief-body").innerHTML = render(r.text, r.checks);
+  $("brief-body").innerHTML = render(r.text, r.checks) + partingHtml();
+  paintSeats($("brief-body"));
   $("brief").hidden = false;
-  $("brief").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  $("brief").scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
 }
 
 function finish(message = "") {
@@ -448,10 +506,62 @@ $("again").addEventListener("click", () => {
   $("run").hidden = true;
   $("form-error").textContent = "";
   $("decision").focus();
-  scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
 });
 
-// --- Exports -------------------------------------------------------------------------------
+// --- Exports: the report, as PDF (default) or Markdown ---------------------------------------
+//
+// In this order: the prompt, the synthesis, the parting thoughts, then the complete conversation, unedited.
+
+const stamp = () => record.at.toISOString().slice(0, 10);
+const longDate = () => record.at.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+
+function promptHtml() {
+  const f = record.fields;
+  const extra = [
+    ["Options", f.options],
+    ["What matters most", f.criteria],
+    ["Context", f.context],
+  ].filter(([, v]) => v.trim());
+  return `<section class="r-prompt"><p class="r-date">${escape(longDate())}</p><h1>${escape(f.decision.trim())}</h1>${extra
+    .map(([k, v]) => `<p><span class="r-label">${k}.</span> ${escape(v.trim()).replace(/\n/g, "<br />")}</p>`)
+    .join("")}${record.docs.length ? `<p><span class="r-label">Documents.</span> ${record.docs.map((d) => escape(`${d.name} (${d.size})`)).join("; ")}</p>` : ""}</section>`;
+}
+
+function sourcesHtml(r) {
+  return r.sources?.length ? `<p class="r-sources">${r.sources.map((s, i) => `<a href="${escape(s.url)}">[${i + 1}] ${escape(s.title)}</a>`).join(" ")}</p>` : "";
+}
+
+function buildReport() {
+  const r = record.brief;
+  const rounds = record.steps
+    .filter((st) => st.results.size)
+    .map(
+      (st, i) => `<section class="r-round"><h2>${i === 0 ? "Round 1 · Independent" : `Round ${i + 1} · ${escape(st.round)}`}</h2>${[...st.results]
+        .map(([id, x]) => {
+          const seat = seatById(id);
+          return `<article class="r-entry" data-seat-color="${seat.id}"><h3>${escape(seat.name)} <span>${escape(seat.maker)}</span></h3>${x.failed ? `<p class="r-failed">Didn't answer: ${escape(x.failed)}</p>` : render(x.text, x.checks) + sourcesHtml(x)}</article>`;
+        })
+        .join("")}</section>`,
+    )
+    .join("");
+  $("report").innerHTML = `${promptHtml()}<section class="r-synthesis"><p class="r-kicker">The synthesis · written by ${escape(r.writer.name)}</p>${render(r.text, r.checks)}</section>${partingHtml()}<section class="r-transcript"><p class="r-kicker">The complete conversation</p>${rounds}</section><p class="r-meta">${escape(
+    `${BRAND.name} · ${longDate()} · Board: ${record.seats.map((s) => `${s.name} (${s.model})`).join(", ")} · Web search ${record.web ? "on" : "off"} · ${seconds(record.totalMs)} · $${spent.toFixed(2)}`,
+  )}</p>`;
+}
+
+/** Seat colours, set through the DOM because the security policy blocks inline style attributes. */
+function paintSeats(root) {
+  for (const el of root.querySelectorAll("[data-seat-color]")) el.style.setProperty("--seat", seatById(el.dataset.seatColor).color);
+}
+
+$("print").addEventListener("click", () => {
+  buildReport();
+  paintSeats($("report"));
+  document.body.classList.add("print-report");
+  window.print();
+});
+addEventListener("afterprint", () => document.body.classList.remove("print-report"));
 
 function download(name, text) {
   const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
@@ -460,61 +570,47 @@ function download(name, text) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const stamp = () => record.at.toISOString().slice(0, 10);
 const checkNote = (checks) =>
   checks
     .filter((c) => c.status !== "verified")
     .map((c) => `- "${c.quote}" (${c.file}, ${c.label}): ${c.status === "elsewhere" ? `found on ${c.foundAt}` : "NOT found in the documents"}`)
     .join("\n");
 
-function header() {
+$("dl-md").addEventListener("click", () => {
   const f = record.fields;
-  return [
-    `Decision: ${f.decision.trim()}`,
-    f.options.trim() && `\nOptions:\n${f.options.trim()}`,
-    f.criteria.trim() && `\nWhat matters most:\n${f.criteria.trim()}`,
-    f.context.trim() && `\nContext:\n${f.context.trim()}`,
-    record.docs.length ? `\nDocuments: ${record.docs.map((d) => `${d.name} (${d.size})`).join("; ")}` : "",
-    `\nBoard: ${record.seats.map((s) => `${s.name} (${s.model})`).join(", ")}. Web search ${record.web ? "on" : "off"}. ${stamp()}.`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-$("dl-brief").addEventListener("click", () => {
-  const b = record.brief;
-  const flagged = checkNote(b.checks);
-  download(`${BRAND.name} brief ${stamp()}.md`, `${b.text}\n\n---\n${header()}\nBrief written by ${b.writer.name}.${flagged ? `\n\nQuotes in this brief that weren't found on the cited page:\n${flagged}` : ""}\n`);
+  const prompt = [
+    `# ${f.decision.trim()}`,
+    `_${longDate()}_`,
+    f.options.trim() && `**Options.** ${f.options.trim()}`,
+    f.criteria.trim() && `**What matters most.** ${f.criteria.trim()}`,
+    f.context.trim() && `**Context.** ${f.context.trim()}`,
+    record.docs.length ? `**Documents.** ${record.docs.map((d) => `${d.name} (${d.size})`).join("; ")}` : "",
+  ].filter(Boolean);
+  const parting = record.parting.length ? `## Parting thoughts from inside the room\n\n${record.parting.map((p) => `- **${p.seat.name}:** ${p.text}`).join("\n")}` : "";
+  const rounds = record.steps
+    .filter((st) => st.results.size)
+    .map(
+      (st, i) =>
+        `## ${i === 0 ? "Round 1: Independent" : `Round ${i + 1}: ${st.round}`}\n\n` +
+        [...st.results]
+          .map(([id, x]) => {
+            const s = seatById(id);
+            if (x.failed) return `### ${s.name} (${s.maker})\n\nDidn't answer: ${x.failed}`;
+            const flagged = checkNote(x.checks);
+            const src = x.sources?.length ? `\n\nSources:\n${x.sources.map((y) => `- [${y.title}](${y.url})`).join("\n")}` : "";
+            return `### ${s.name} (${s.maker})\n\n${x.text}${src}${flagged ? `\n\nQuote check:\n${flagged}` : ""}`;
+          })
+          .join("\n\n"),
+    )
+    .join("\n\n");
+  const meta = `${BRAND.name} · Board: ${record.seats.map((s) => `${s.name} (${s.model})`).join(", ")} · Web search ${record.web ? "on" : "off"} · ${seconds(record.totalMs)} · $${spent.toFixed(2)} · brief by ${record.brief.writer.name}`;
+  download(`${BRAND.name} ${stamp()}.md`, [prompt.join("\n\n"), record.brief.text, parting, `# The complete conversation\n\n${rounds}`, `---\n${meta}`].filter(Boolean).join("\n\n---\n\n") + "\n");
 });
-
-$("dl-record").addEventListener("click", () => {
-  const section = (title, map) =>
-    `# ${title}\n\n` +
-    [...map]
-      .map(([id, r]) => {
-        const s = seatById(id);
-        if (r.failed) return `## ${s.name} (${s.maker})\n\nFailed: ${r.failed}`;
-        const flagged = checkNote(r.checks);
-        const src = r.sources?.length ? `\n\nWeb sources:\n${r.sources.map((x) => `- ${x.title}: ${x.url}`).join("\n")}` : "";
-        return `## ${s.name} (${s.maker})\n\n${r.text}${src}${flagged ? `\n\nQuote check:\n${flagged}` : ""}`;
-      })
-      .join("\n\n");
-  const parts = [`# ${BRAND.name}: full record\n\n${header()}`, record.brief && record.brief.text, record.blind && section("Independent answers", record.blind), record.debate && section("Debate", record.debate)];
-  download(`${BRAND.name} record ${stamp()}.md`, parts.filter(Boolean).join("\n\n---\n\n") + "\n");
-});
-
-$("print").addEventListener("click", () => window.print());
-// Closed answer cards don't print, so open them all for printing and restore afterwards.
-let closedForPrint = [];
-addEventListener("beforeprint", () => {
-  closedForPrint = [...document.querySelectorAll(".card:not([open])")];
-  closedForPrint.forEach((d) => (d.open = true));
-});
-addEventListener("afterprint", () => closedForPrint.forEach((d) => (d.open = false)));
 
 // --- Start ---------------------------------------------------------------------------------
 
 showKey();
+$("web").checked = WEB_SEARCH_DEFAULT;
 renderSeats();
 estimate();
 modelCatalog()
