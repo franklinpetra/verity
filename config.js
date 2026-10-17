@@ -18,6 +18,9 @@ export const SEATS = [
   { id: "muse", name: "Muse", maker: "Meta", model: "meta/muse-spark-1.3", color: "#6b4aa8" },
 ];
 
+// Which service reaches the models. "openrouter" today; adapters live in providers/ (see llm.js).
+export const PROVIDER = "openrouter";
+
 // Who writes the decision brief: "rotate" takes turns, so each advisor writes about every fifth brief.
 // Or a seat id, such as "claude", to always use one.
 export const SYNTHESIZER = "rotate";

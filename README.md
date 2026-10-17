@@ -46,7 +46,8 @@ You can download the brief, download the full record (every answer, the debate a
 | `app.js` | The flow: documents, key, estimate, the three steps, exports |
 | `docs.js` | Reads PDF, Word, Excel, PowerPoint and text; picks relevant sections when documents are too long |
 | `prompts.js` | What each advisor is told at each step |
-| `llm.js` | OpenRouter calls, failures and the live model list |
+| `llm.js` | The one door to the models: picks the adapter set in `config.js` and documents the contract every adapter follows |
+| `providers/openrouter.js` | Today's adapter: OpenRouter calls, failures, web search and the live model list. Direct-to-provider or backend adapters go beside it |
 | `verify.js` | The quote check |
 | `markdown.js` | Safe rendering of answers, with quote-check marks |
 | `vendor/` | pdf.js (Apache-2.0), mammoth (BSD-2), JSZip (MIT), SheetJS (Apache-2.0) |
