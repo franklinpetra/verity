@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Verity</title>
+    <meta name="description" content="A board of AI advisors from five different companies reads your documents, answers independently, debates, and hands you a decision brief with every quote checked." />
+    <meta name="theme-color" content="#f4f1ea" />
+    <!-- The page may talk to OpenRouter and nothing else. (Also sent as a header by vercel.json, with frame-ancestors.) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src https://openrouter.ai; worker-src 'self' blob:; form-action 'none'; base-uri 'none'" />
+    <link rel="icon" href="icons/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="wordmark" href="./" id="wordmark">Verity</a>
+      <nav class="topnav" aria-label="About">
+        <button type="button" class="navlink" data-panel="how">How it works</button>
+        <button type="button" class="navlink" data-panel="privacy">Where your data goes</button>
+        <button type="button" class="key-btn" id="key-btn" data-panel="key"><span class="key-dot" aria-hidden="true"></span><span id="key-label">Add your key</span></button>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="intro" id="intro">
+        <h1>What are you deciding?</h1>
+        <p class="lede" id="tagline">Five AI advisors from five different companies read your documents, answer on their own, debate each other once, and hand you a decision brief with every quote checked against the source.</p>
+      </section>
+
+      <form id="ask" class="ask" autocomplete="off" novalidate>
+        <label for="decision" class="sr-only">The decision</label>
+        <textarea id="decision" rows="3" maxlength="4000" placeholder="Should we acquire Northwind at a $40M valuation, or keep building in-house?" required></textarea>
+
+        <details class="more" id="more">
+          <summary>Add options, what matters most, and context <span class="muted">(optional, but it sharpens the advice)</span></summary>
+          <div class="more-grid">
+            <label>Options being considered<textarea id="options" rows="3" maxlength="3000" placeholder="1. Acquire at $40M&#10;2. Partner for 18 months, then decide&#10;3. Build in-house"></textarea></label>
+            <label>What matters most<textarea id="criteria" rows="3" maxlength="3000" placeholder="Speed to market, keeping the engineering team, cash runway past 2028"></textarea></label>
+            <label class="wide">Context<textarea id="context" rows="3" maxlength="8000" placeholder="Anything the documents don't say: deadlines, politics, what's been tried, your instinct"></textarea></label>
+          </div>
+        </details>
+
+        <div class="drop" id="drop">
+          <input type="file" id="files" multiple hidden />
+          <p><strong>Drop documents here</strong> or <button type="button" class="linkish" id="choose">choose files</button></p>
+          <p class="muted small">PDF, Word, Excel, PowerPoint or text. Read in your browser, never uploaded to us.</p>
+        </div>
+        <ul class="docs" id="docs" aria-label="Documents"></ul>
+
+        <fieldset class="seats">
+          <legend>The board <span class="muted">· tap to seat or unseat</span></legend>
+          <div id="seats" class="seat-list"></div>
+        </fieldset>
+
+        <label class="toggle">
+          <input type="checkbox" id="web" />
+          <span><strong>Let advisors search the web for sources</strong>, such as market data, comparable deals and research. <span class="muted">Adds a few cents, and sends search queries to OpenRouter's search provider. Turn off for confidential matters; advisors will then cite only your documents.</span></span>
+        </label>
+
+        <div class="go">
+          <p class="estimate" id="estimate" aria-live="polite"></p>
+          <button type="submit" class="primary" id="go">Convene the board</button>
+        </div>
+        <p class="form-error" id="form-error" role="alert"></p>
+      </form>
+
+      <section class="run" id="run" hidden aria-live="polite">
+        <div class="run-head">
+          <ol class="steps" id="steps">
+            <li data-step="blind">Independent answers</li>
+            <li data-step="debate">Conversation</li>
+            <li data-step="brief">Decision brief</li>
+          </ol>
+          <p class="run-note" id="run-note" role="status"></p>
+          <div class="run-actions">
+            <span class="spent" id="spent"></span>
+            <button type="button" class="secondary" id="stop">Stop</button>
+          </div>
+        </div>
+
+        <article class="brief" id="brief" hidden>
+          <div class="brief-tools">
+            <p class="checks" id="checks"></p>
+            <div class="exports">
+              <button type="button" class="primary small" id="print">Save as PDF</button>
+              <button type="button" class="secondary small" id="dl-md">Markdown</button>
+            </div>
+          </div>
+          <div class="brief-body md" id="brief-body"></div>
+        </article>
+
+        <section class="round" id="round-blind">
+          <h2>Independent answers <span class="muted">· each advisor alone, unaware of the others</span></h2>
+          <div class="cards" id="cards-blind"></div>
+        </section>
+        <section class="round" id="round-debate" hidden>
+          <h2>Conversation <span class="muted">· each advisor reads the others, challenges and builds</span></h2>
+          <div class="cards" id="cards-debate"></div>
+        </section>
+        <section class="round" id="round-more" hidden>
+          <h2>Conversation, continued <span class="muted">· the brief's writer asked for one more exchange</span></h2>
+          <p class="more-why" id="more-why"></p>
+          <div class="cards" id="cards-more"></div>
+        </section>
+
+        <p class="again"><button type="button" class="secondary" id="again">Ask about another decision</button></p>
+      </section>
+    </main>
+
+    <!-- The printable report, built when someone saves the PDF. Hidden on screen. -->
+    <div class="report" id="report" aria-hidden="true"></div>
+
+    <footer class="foot">
+      <span class="maker" id="maker"></span>
+    </footer>
+
+    <dialog class="panel" id="key" aria-labelledby="key-title">
+      <button type="button" class="close" data-close aria-label="Close">×</button>
+      <h2 id="key-title">Your OpenRouter key</h2>
+      <p>Verity runs on your own <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter</a> key, so the AI costs go on your OpenRouter account and your documents go only from this browser to the models.</p>
+      <form id="key-form" class="key-form">
+        <label for="key-input" class="sr-only">OpenRouter key</label>
+        <input id="key-input" type="password" placeholder="sk-or-…" autocomplete="off" spellcheck="false" />
+        <label class="toggle small"><input type="checkbox" id="key-remember" /> <span>Remember on this device</span></label>
+        <div class="key-row">
+          <button type="submit" class="primary small">Save key</button>
+          <button type="button" class="secondary small" id="key-forget">Forget key</button>
+        </div>
+        <p class="key-status" id="key-status" role="status"></p>
+      </form>
+      <p class="muted small">Tip: give the key a spending limit in OpenRouter. A typical decision costs a few dollars.</p>
+    </dialog>
+
+    <dialog class="panel" id="how" aria-labelledby="how-title">
+      <button type="button" class="close" data-close aria-label="Close">×</button>
+      <h2 id="how-title">How it works</h2>
+      <ol class="panel-list">
+        <li><b>Independent.</b> Each advisor investigates alone, unaware the others exist, because knowing there's a room makes models posture or defer. Each reports its most consequential insight in about three sentences, with sources.</li>
+        <li><b>Quote check.</b> Every quote attributed to your documents is looked up in the text itself. Quotes that aren't there are flagged to the whole board.</li>
+        <li><b>Conversation.</b> Each advisor reads the others and advances the discussion: challenging assumptions, adding evidence, revising when persuaded. Agreement alone isn't progress.</li>
+        <li><b>Decision brief.</b> The advisors take turns writing it. It leads with the most consequential discovery, even if only one advisor found it, and keeps real disagreement visible. If the board isn't ready, the writer can ask for one more exchange. Underneath, each advisor leaves a one-line parting thought.</li>
+      </ol>
+      <p class="panel-note">A failure never reads as a success: if an advisor times out or its answer is cut off, the run says so and carries on with the rest. Long documents are read whole when they fit; when they don't, an advisor gets the sections most relevant to the decision, and the brief says so.</p>
+    </dialog>
+
+    <dialog class="panel" id="privacy" aria-labelledby="privacy-title">
+      <button type="button" class="close" data-close aria-label="Close">×</button>
+      <h2 id="privacy-title">Where your data goes</h2>
+      <ul class="panel-list">
+        <li><b>Your documents</b> are read in this browser tab. They're never uploaded to us; there is no server behind this page.</li>
+        <li><b>The models</b> receive your decision and documents through OpenRouter, using your key, and only from providers that don't keep or train on what they're sent.</li>
+        <li><b>Web search</b>, when you turn it on, sends search queries to OpenRouter's search provider. Leave it off for confidential matters.</li>
+        <li><b>Your key</b> stays in this browser, for this session only unless you choose to remember it.</li>
+        <li><b>Nothing else.</b> No analytics, no cookies, no fonts or scripts from other sites. The page's security policy blocks every connection except OpenRouter, so this isn't just a promise.</li>
+      </ul>
+    </dialog>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
