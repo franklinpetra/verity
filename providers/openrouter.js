@@ -63,13 +63,19 @@ export async function ask({ key, model, messages, web = false, signal }) {
   return { text, sources, cost: Number(data.usage?.cost) || 0 };
 }
 
-/** OpenRouter's public model list: { id: { context, inPrice, outPrice, cachePrice } }, prices per token. */
+/** OpenRouter's public model list: { id: { name, maker, writes, context, inPrice, outPrice, cachePrice } }, prices per token. */
 export async function modelCatalog() {
   const res = await fetch(`${API}/models`);
   if (!res.ok) throw new Error("Couldn't load OpenRouter's model list.");
   const out = {};
   for (const m of (await res.json()).data || []) {
+    const full = m.name || m.id;
+    const colon = full.indexOf(": ");
     out[m.id] = {
+      name: colon > 0 ? full.slice(colon + 2) : full,
+      maker: colon > 0 ? full.slice(0, colon) : m.id.split("/")[0],
+      // Only models that answer in text can sit on the board.
+      writes: !m.architecture?.output_modalities || m.architecture.output_modalities.includes("text"),
       context: m.context_length || 0,
       inPrice: Number(m.pricing?.prompt) || 0,
       outPrice: Number(m.pricing?.completion) || 0,
@@ -79,11 +85,11 @@ export async function modelCatalog() {
   return out;
 }
 
-/** Checks a key and returns what's left on it, or throws a plain-language error. */
+/** Checks a key and returns what's left on it and what it has spent so far, or throws a plain-language error. */
 export async function checkKey(key) {
   const res = await fetch(`${API}/key`, { headers: { Authorization: `Bearer ${key}` } });
   if (res.status === 401) throw new Error("OpenRouter didn't accept that key.");
   if (!res.ok) throw new Error("Couldn't check the key right now.");
   const { data } = await res.json();
-  return { label: data?.label || "", remaining: data?.limit_remaining ?? null };
+  return { label: data?.label || "", remaining: data?.limit_remaining ?? null, usage: typeof data?.usage === "number" ? data.usage : null };
 }

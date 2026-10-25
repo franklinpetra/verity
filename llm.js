@@ -5,8 +5,8 @@
 //   ask({ key, model, messages, web, signal }) → { text, sources: [{ url, title }], cost }
 //       Throws SeatError with a plain-language reason. A reply cut off at the length limit must throw,
 //       never return a partial answer.
-//   modelCatalog() → { [model]: { context, inPrice, outPrice, cachePrice } }, prices per token
-//   checkKey(key) → { label, remaining }
+//   modelCatalog() → { [model]: { name, maker, writes, context, inPrice, outPrice, cachePrice } }, prices per token
+//   checkKey(key) → { label, remaining, usage }, usage being what the key has spent so far
 // Later adapters (direct to each AI company, or our own backend gateway) follow the same contract. A backend
 // adapter also changes the privacy story and the Content-Security-Policy, so update both when adding one.
 

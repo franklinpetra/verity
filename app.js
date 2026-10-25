@@ -2,7 +2,7 @@
 // debates once, and writes a decision brief with every document quote checked against the source.
 // Everything runs in this tab; the only network calls go to OpenRouter with the person's own key.
 
-import { BRAND, LIMITS, SEATS, SYNTHESIZER, WEB_SEARCH_DEFAULT } from "./config.js";
+import { ADDED_COLORS, BRAND, LIMITS, MAX_SEATS, SEATS, SYNTHESIZER, WEB_SEARCH_DEFAULT } from "./config.js";
 import { ACCEPT, documentsText, pickRelevant, readDocument, tokensOf } from "./docs.js";
 import { SeatError, ask, checkKey, modelCatalog } from "./llm.js";
 import { render } from "./markdown.js";
@@ -15,12 +15,14 @@ const KEY_STORE = "verity-openrouter-key";
 const TURN_STORE = "verity-writer-turn"; // whose turn it is to write the brief
 const OVERHEAD_TOKENS = 3_000; // instructions and the decision itself
 const ANSWER_TOKENS = 2_500; // a typical written answer, for estimates
-const THINKING_TOKENS = 4_000; // a typical amount of reasoning, for estimates
 
 let docs = [];
 let reading = 0;
 let catalog = null;
+// The board on offer: the configured seats plus any advisor the person adds from OpenRouter's list.
+let board = [...SEATS];
 let seated = new Set(SEATS.map((s) => s.id));
+let usageAtStart = null; // what the key had spent when this decision began, to read the exact charge
 let controller = null;
 let record = null; // the finished (or running) decision, for exports
 
@@ -30,6 +32,11 @@ document.title = BRAND.name;
 $("wordmark").textContent = BRAND.name;
 if (BRAND.maker) {
   $("maker").innerHTML = `<img src="${escape(BRAND.maker.logo)}" alt="" width="26" height="35" /><span>${escape(BRAND.maker.name)}</span>`;
+}
+if (BRAND.feedback) {
+  const { name, email } = BRAND.feedback;
+  const subject = encodeURIComponent(`${BRAND.name} feedback`);
+  $("feedback").innerHTML = `Made by ${escape(name)}${BRAND.maker ? ` at ${escape(BRAND.maker.name)}` : ""}. If something isn't working, or there's a feature you'd like, email <a href="mailto:${escape(email)}?subject=${subject}">${escape(email)}</a>.`;
 }
 
 // --- Key ------------------------------------------------------------------------
@@ -136,6 +143,8 @@ function renderDocs(pending = []) {
         }</span><button type="button" class="remove" data-remove="${i}" aria-label="Remove ${escape(d.name)}">×</button></li>`,
       )
       .join("") + pending.map((name) => `<li class="doc reading"><span class="doc-name">${escape(name)}</span> · reading…</li>`).join("");
+  // Documents being read or already read keep their section open.
+  if (docs.length || pending.length) $("docs-more").open = true;
   estimate();
 }
 
@@ -168,21 +177,78 @@ $("docs").addEventListener("click", (e) => {
 // --- Seats ---------------------------------------------------------------------------
 
 function renderSeats() {
-  $("seats").innerHTML = SEATS.map(
-    (s) => `<button type="button" class="seat" data-seat="${s.id}" aria-pressed="${seated.has(s.id)}"><span class="dot" aria-hidden="true"></span>${escape(s.name)} <span class="co">${escape(s.maker)}</span></button>`,
-  ).join("");
+  $("seats").innerHTML =
+    board
+      .map(
+        (s) => `<button type="button" class="seat" data-seat="${escape(s.id)}" aria-pressed="${seated.has(s.id)}"><span class="dot" aria-hidden="true"></span>${escape(s.name)} <span class="co">${escape(s.maker)}</span></button>`,
+      )
+      .join("") + `<button type="button" class="seat add-seat" id="add-seat">+ Add an advisor</button>`;
   // Colours are set through the DOM, since the security policy blocks inline style attributes.
   for (const b of $("seats").querySelectorAll("[data-seat]")) b.style.setProperty("--seat", seatById(b.dataset.seat).color);
+  $("seat-count").textContent = `· tap to seat or unseat · ${seated.size} of ${MAX_SEATS} seats filled (at least 2)`;
 }
 $("seats").addEventListener("click", (e) => {
+  if (e.target.closest("#add-seat")) return openAdd();
   const b = e.target.closest("[data-seat]");
   if (!b) return;
   const id = b.dataset.seat;
   if (seated.has(id)) {
     if (seated.size <= 2) return ($("form-error").textContent = "A board needs at least two advisors.");
     seated.delete(id);
-  } else seated.add(id);
+  } else {
+    if (seated.size >= MAX_SEATS) return ($("form-error").textContent = `The board has ${MAX_SEATS} seats. Unseat someone first.`);
+    seated.add(id);
+  }
   $("form-error").textContent = "";
+  renderSeats();
+  estimate();
+});
+
+// --- Adding advisors from OpenRouter's list -------------------------------------------------
+
+function openAdd() {
+  $("add-search").value = "";
+  renderAdd();
+  $("add").showModal();
+  $("add-search").focus();
+}
+
+function renderAdd() {
+  const list = $("add-list");
+  if (!catalog) return (list.innerHTML = `<li class="muted small">Loading OpenRouter's list…</li>`);
+  const words = $("add-search").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = Object.entries(catalog)
+    .filter(([id, m]) => m.writes && !id.endsWith(":free") && !board.some((s) => s.model === id))
+    .filter(([id, m]) => words.every((w) => `${id} ${m.name} ${m.maker}`.toLowerCase().includes(w)))
+    .sort((a, b) => a[1].name.localeCompare(b[1].name))
+    .slice(0, 60);
+  list.innerHTML = matches.length
+    ? matches
+        .map(
+          ([id, m]) =>
+            `<li><button type="button" class="add-item" data-model="${escape(id)}"><strong>${escape(m.name)}</strong> <span class="co">${escape(m.maker)}</span><span class="add-price">$${(m.inPrice * 1e6).toFixed(2)} / $${(m.outPrice * 1e6).toFixed(2)} per million tokens</span></button></li>`,
+        )
+        .join("")
+    : `<li class="muted small">No models match that search.</li>`;
+}
+
+$("add-search").addEventListener("input", renderAdd);
+$("add-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-model]");
+  if (!b) return;
+  const id = b.dataset.model;
+  const m = catalog[id];
+  const used = new Set(board.map((s) => s.color));
+  board.push({
+    id,
+    name: m.name,
+    maker: m.maker,
+    model: id,
+    color: ADDED_COLORS.find((c) => !used.has(c)) || ADDED_COLORS[board.length % ADDED_COLORS.length],
+  });
+  if (seated.size < MAX_SEATS) seated.add(id);
+  $("add").close();
+  $("form-error").textContent = seated.has(id) ? "" : `${m.name} is on the bench: the board is full, so unseat someone to seat it.`;
   renderSeats();
   estimate();
 });
@@ -208,29 +274,15 @@ function docsFor(model, decision, answersTokens) {
 function estimate() {
   const el = $("estimate");
   if (reading) return (el.textContent = "Reading documents…");
-  const seats = SEATS.filter((s) => seated.has(s.id));
-  if (!catalog) return (el.textContent = `${seats.length} advisors · 3 steps`);
-  const docTokens = tokensOf(allDocChars());
+  const seats = board.filter((s) => seated.has(s.id));
   const n = seats.length;
-  let low = 0;
-  const excerpted = [];
-  for (const s of seats) {
-    const m = catalog[s.model];
-    if (!m) continue;
-    const fit = Math.min(docTokens, docBudgetChars(s.model, n * ANSWER_TOKENS * 2) / 4);
-    if (fit < docTokens) excerpted.push(s.name);
-    const out = (ANSWER_TOKENS + THINKING_TOKENS) * m.outPrice;
-    const reread = m.cachePrice || m.inPrice;
-    low += (fit + OVERHEAD_TOKENS) * m.inPrice + out; // independent answer
-    low += fit * reread + (OVERHEAD_TOKENS + n * ANSWER_TOKENS) * m.inPrice + out; // debate
-    if (s.id === (seated.has(SYNTHESIZER) ? SYNTHESIZER : seats[0].id)) {
-      low += fit * reread + (OVERHEAD_TOKENS + 2 * n * ANSWER_TOKENS) * m.inPrice + (ANSWER_TOKENS * 2 + THINKING_TOKENS) * m.outPrice;
-    }
-  }
-  const web = $("web").checked ? n * 2 * LIMITS.webResults * 0.004 : 0;
+  const docTokens = tokensOf(allDocChars());
+  // Who will read excerpts because the documents are longer than they can take at once.
+  const excerpted = catalog
+    ? seats.filter((s) => catalog[s.model] && docBudgetChars(s.model, n * ANSWER_TOKENS * 2) / 4 < docTokens).map((s) => s.name)
+    : [];
   const words = docs.length ? ` · reading about ${Math.round(allDocChars() / 6).toLocaleString()} words` : "";
-  const range = `$${(low + web).toFixed(2)}–$${((low + web) * 1.8).toFixed(2)}`;
-  el.innerHTML = `${n} advisors · 3 steps${escape(words)} · <strong>about ${range}</strong> on your OpenRouter key${
+  el.innerHTML = `${n} advisors · 3 steps${escape(words)} · the price depends on the advisors chosen: <strong>about $0.25–$2.25</strong> on your OpenRouter key${
     excerpted.length ? `<br /><span class="muted">${escape(excerpted.join(", "))} will read the most relevant sections, since the documents are longer than ${excerpted.length === 1 ? "it" : "they"} can take at once.</span>` : ""
   }`;
 }
@@ -238,7 +290,7 @@ $("web").addEventListener("change", estimate);
 
 // --- Running a decision -------------------------------------------------------------------
 
-const seatById = (id) => SEATS.find((s) => s.id === id);
+const seatById = (id) => board.find((s) => s.id === id);
 
 function showCard(round, container, seat, state, html = "", failed = false) {
   const id = `card-${container}-${seat.id}`;
@@ -323,7 +375,7 @@ const named = (list) => list.map(([id, r]) => ({ name: seatById(id).name, text: 
 
 /** Who writes the brief: a fixed seat, or everyone in turn, about every fifth decision each. */
 function chooseWriter(availableIds) {
-  const order = SEATS.filter((s) => availableIds.includes(s.id));
+  const order = board.filter((s) => availableIds.includes(s.id));
   if (SYNTHESIZER !== "rotate" && availableIds.includes(SYNTHESIZER)) return seatById(SYNTHESIZER);
   let turn = 0;
   try {
@@ -341,7 +393,8 @@ async function convene() {
     context: $("context").value,
   };
   const decision = decisionText(fields);
-  const seats = SEATS.filter((s) => seated.has(s.id));
+  const seats = board.filter((s) => seated.has(s.id));
+  usageAtStart = checkKey(currentKey()).then((k) => k.usage, () => null);
   record = { at: new Date(), fields, docs: docs.map((d) => ({ name: d.name, kind: d.kind, size: sizeOf(d) })), seats, steps: [], brief: null, web: $("web").checked };
   controller = new AbortController();
   spent = 0;
@@ -467,7 +520,8 @@ function showBrief() {
     s.total ? `<strong>${s.total} document quotes checked:</strong> ${s.ok} found${s.moved ? `, ${s.moved} on a different page` : ""}${s.bad ? `, <strong>${s.bad} not found</strong>` : ""}.` : docs.length ? "No document quotes were cited." : "",
     missing.length ? `Missing: ${escape(missing.join(", "))}.` : "",
     r.excerpt || [...first.values()].some((x) => x.excerpt) ? "Some advisors read excerpts of the documents." : "",
-    `Took ${seconds(record.totalMs)} and cost $${spent.toFixed(2)}.`,
+    `Took ${seconds(record.totalMs)} and cost about $${spent.toFixed(2)}, as the models reported.`,
+    `<button type="button" class="linkish" id="exact">Check the exact charge on my key</button> <span id="exact-out"></span>`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -476,6 +530,18 @@ function showBrief() {
   $("brief").hidden = false;
   $("brief").scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
 }
+
+// The exact charge: what the key has spent since this decision began, straight from OpenRouter.
+$("checks").addEventListener("click", async (e) => {
+  if (!e.target.closest("#exact")) return;
+  const out = $("exact-out");
+  out.textContent = "Asking OpenRouter…";
+  const [before, now] = await Promise.all([usageAtStart, checkKey(currentKey()).then((k) => k.usage, () => null)]);
+  out.textContent =
+    before == null || now == null
+      ? "OpenRouter didn't say. Your activity page at openrouter.ai has the full record."
+      : `Charged to your key since this decision began: $${Math.max(0, now - before).toFixed(4)}. OpenRouter can take a minute to record the last requests, and anything else using this key counts too.`;
+});
 
 function finish(message = "") {
   $("go").disabled = false;
@@ -496,7 +562,7 @@ $("ask").addEventListener("submit", (e) => {
     return $("key").showModal();
   }
   if (reading) return ($("form-error").textContent = "Still reading your documents. One moment.");
-  const unknown = SEATS.filter((s) => seated.has(s.id) && catalog && !catalog[s.model]);
+  const unknown = board.filter((s) => seated.has(s.id) && catalog && !catalog[s.model]);
   if (unknown.length) return ($("form-error").textContent = `${unknown.map((s) => s.name).join(", ")} isn't available on OpenRouter right now. Unseat ${unknown.length === 1 ? "it" : "them"} to continue.`);
   convene();
 });
@@ -617,7 +683,8 @@ modelCatalog()
   .then((c) => {
     catalog = c;
     estimate();
+    if ($("add").open) renderAdd();
   })
   .catch(() => {
-    $("estimate").textContent = "Couldn't load OpenRouter's model list, so there's no cost estimate. Runs still work.";
+    $("add-list").innerHTML = `<li class="muted small">Couldn't load OpenRouter's model list. The board's own advisors still work.</li>`;
   });

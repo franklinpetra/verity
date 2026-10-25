@@ -40,15 +40,18 @@
           </div>
         </details>
 
-        <div class="drop" id="drop">
-          <input type="file" id="files" multiple hidden />
-          <p><strong>Drop documents here</strong> or <button type="button" class="linkish" id="choose">choose files</button></p>
-          <p class="muted small">PDF, Word, Excel, PowerPoint or text. Read in your browser, never uploaded to us.</p>
-        </div>
-        <ul class="docs" id="docs" aria-label="Documents"></ul>
+        <details class="more" id="docs-more">
+          <summary>Add documents <span class="muted">(read in your browser, never uploaded to us)</span></summary>
+          <div class="drop" id="drop">
+            <input type="file" id="files" multiple hidden />
+            <p><strong>Drop documents here</strong> or <button type="button" class="linkish" id="choose">choose files</button></p>
+            <p class="muted small">PDF, Word, Excel, PowerPoint or text.</p>
+          </div>
+          <ul class="docs" id="docs" aria-label="Documents"></ul>
+        </details>
 
         <fieldset class="seats">
-          <legend>The board <span class="muted">· tap to seat or unseat</span></legend>
+          <legend>The board <span class="muted" id="seat-count">· tap to seat or unseat</span></legend>
           <div id="seats" class="seat-list"></div>
         </fieldset>
 
@@ -63,6 +66,15 @@
         </div>
         <p class="form-error" id="form-error" role="alert"></p>
       </form>
+
+      <dialog class="panel" id="add" aria-labelledby="add-title">
+        <button type="button" class="close" data-close aria-label="Close">×</button>
+        <h2 id="add-title">Add an advisor</h2>
+        <p class="muted small">Any model on OpenRouter that answers in text. Each request still asks for providers that don't keep or train on what they're sent; a model with no such provider will say so when it runs.</p>
+        <label for="add-search" class="sr-only">Search models</label>
+        <input id="add-search" type="search" placeholder="Search: claude, gpt, gemini, kimi, mistral…" autocomplete="off" spellcheck="false" />
+        <ul class="add-list" id="add-list"></ul>
+      </dialog>
 
       <section class="run" id="run" hidden aria-live="polite">
         <div class="run-head">
@@ -111,6 +123,8 @@
     <div class="report" id="report" aria-hidden="true"></div>
 
     <footer class="foot">
+      <p class="foot-note">AI advisors can make mistakes, including about sources. Check anything important before you rely on it, and treat the brief as input to your decision, not professional advice.</p>
+      <p class="foot-note" id="feedback"></p>
       <span class="maker" id="maker"></span>
     </footer>
 
@@ -128,7 +142,7 @@
         </div>
         <p class="key-status" id="key-status" role="status"></p>
       </form>
-      <p class="muted small">Tip: give the key a spending limit in OpenRouter. A typical decision costs a few dollars.</p>
+      <p class="muted small">Tip: give the key a spending limit in OpenRouter. A decision usually costs between about $0.25 and $2.25, depending on the advisors.</p>
     </dialog>
 
     <dialog class="panel" id="how" aria-labelledby="how-title">

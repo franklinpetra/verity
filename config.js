@@ -5,6 +5,8 @@ export const BRAND = {
   tagline: "A board of AI advisors for decisions that matter.",
   // The maker's mark; a white-label version sets this to null.
   maker: { name: "Tandem Works", logo: "icons/tandem-works.png" },
+  // Who made it and where ideas and problems go; a white-label version sets this to null.
+  feedback: { name: "Petra Franklin", email: "petrafranklin@gmail.com" },
 };
 
 // The board. Each seat is a model from a different company, so their mistakes don't line up.
@@ -17,6 +19,10 @@ export const SEATS = [
   // Not the "contributor" tier, which trains on what it's sent.
   { id: "muse", name: "Muse", maker: "Meta", model: "meta/muse-spark-1.3", color: "#6b4aa8" },
 ];
+
+// Seats at the table, and the colours given to advisors added from OpenRouter's list, in order.
+export const MAX_SEATS = 6;
+export const ADDED_COLORS = ["#2c7f8f", "#8a6d1f", "#a23c6b", "#4f5d75", "#7a4a2a", "#b03a3a"];
 
 // Which service reaches the models. "openrouter" today; adapters live in providers/ (see llm.js).
 export const PROVIDER = "openrouter";
