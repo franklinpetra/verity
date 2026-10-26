@@ -2,7 +2,7 @@
 
 **A board of AI advisors for decisions that matter.**
 
-Describe a decision and drop in the documents behind it: a diligence memo, a contract, a board deck, a financial model. Five advisors from five different AI companies (Claude, GPT, Gemini, Grok and Muse) read them, answer on their own, debate each other once, and hand you a decision brief. Every quote an advisor attributes to your documents is checked against the documents themselves.
+Describe a decision and drop in the documents behind it: a diligence memo, a contract, a board deck, a financial model. Up to six advisors from different AI companies (by default Claude, GPT, Gemini, Grok and Muse, or any you add from OpenRouter) read them, answer on their own, debate each other once, and hand you a decision brief. Every quote an advisor attributes to your documents is checked against the documents themselves.
 
 It runs entirely in your browser, on your own OpenRouter key. There is no server.
 
