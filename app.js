@@ -29,14 +29,15 @@ let record = null; // the finished (or running) decision, for exports
 // --- Brand ---------------------------------------------------------------------
 
 document.title = BRAND.name;
-$("wordmark").textContent = BRAND.name;
+// A site that embeds Verity may replace the wordmark with its own navigation.
+if ($("wordmark")) $("wordmark").textContent = BRAND.name;
 if (BRAND.maker) {
-  $("maker").innerHTML = `<img src="${escape(BRAND.maker.logo)}" alt="" width="26" height="35" /><span>${escape(BRAND.maker.name)}</span>`;
+  $("maker").innerHTML = `<img src="${escape(BRAND.maker.logo)}" alt="${escape(BRAND.maker.name)}" width="24" height="32" />`;
 }
 if (BRAND.feedback) {
   const { name, email } = BRAND.feedback;
   const subject = encodeURIComponent(`${BRAND.name} feedback`);
-  $("feedback").innerHTML = `Made by ${escape(name)}${BRAND.maker ? ` at ${escape(BRAND.maker.name)}` : ""}. If something isn't working, or there's a feature you'd like, email <a href="mailto:${escape(email)}?subject=${subject}">${escape(email)}</a>.`;
+  $("feedback").innerHTML = `Please <a href="mailto:${escape(email)}?subject=${subject}">email</a> if something isn't working, or you have an idea for a new feature – ${escape(name)}${BRAND.maker ? ` of ${escape(BRAND.maker.name)}` : ""}`;
 }
 
 // --- Key ------------------------------------------------------------------------
